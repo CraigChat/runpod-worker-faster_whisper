@@ -8,7 +8,11 @@ The handler must be called with --rp_debugger flag to enable it.
 import base64
 import logging
 import tempfile
+from typing import List
+import warnings
 
+from deepmultilingualpunctuation import PunctuationModel
+from corrector import Word, add_ellipsis_to_words, correct_words
 from rp_schema import INPUT_VALIDATIONS
 from runpod.serverless.utils import download_files_from_urls, rp_cleanup, rp_debugger
 from runpod.serverless.utils.rp_validator import validate
@@ -19,6 +23,7 @@ logger = logging.getLogger("runpod-worker")
 
 MODEL = predict.Predictor()
 MODEL.setup()
+PUNCTUATION_MODEL = PunctuationModel()
 
 
 def base64_to_tempfile(base64_file: str) -> str:
@@ -115,7 +120,43 @@ def run_whisper_job(job):
     with rp_debugger.LineTimer('cleanup_step'):
         rp_cleanup.clean(['input_objects'])
 
-    return results[0] if len(results) == 1 else results
+    if not job_input["transcription_corrector"]:
+        return results[0] if len(results) == 1 else results
 
+    with rp_debugger.LineTimer('punctuation_correction_step'):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            all_words: List[Word] = []
+            for track_index, result in enumerate(results):
+                track_words: List[Word] = []
+                if "segments" in result:
+                    for segment in result["segments"]:
+                        corrected_text = PUNCTUATION_MODEL.restore_punctuation(segment["text"])
+                        segment["corrected_text"] = corrected_text
+                        if "words" in segment:
+                            for word in segment["words"]:
+                                if word["word"]:
+                                    track_words.append(Word(
+                                        track = track_index,
+                                        word = word["word"],
+                                        start = word["start"],
+                                        end = word["end"]
+                                    ))
+
+                if len(track_words) > 1:
+                    add_ellipsis_to_words(track_words)
+                    all_words.extend(track_words)
+
+                # with open(f"jobs/track_{track_index}.words.json", 'w') as f:
+                #     f.write(json.dumps(track_words, cls=WordEncoder, indent=2))
+
+    (corrected_lines, change_count) = correct_words(all_words, PUNCTUATION_MODEL, logger)
+
+    # Return new format when transcription_corrector is enabled
+    return {
+        "corrected_segments": corrected_lines,
+        "change_count": change_count,
+        "results": results
+    }
 
 runpod.serverless.start({"handler": run_whisper_job})

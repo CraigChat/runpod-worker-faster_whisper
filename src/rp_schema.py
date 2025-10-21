@@ -109,4 +109,9 @@ INPUT_VALIDATIONS = {
         'required': False,
         'default': True
     },
+    'transcription_corrector': {
+        'type': bool,
+        'required': False,
+        'default': False
+    },
 }
