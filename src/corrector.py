@@ -74,9 +74,9 @@ class WordList:
         return "".join(word.raw_word for word in self.words)
         # return " ".join(word.word for word in self.words)
 
-    @property
-    def pretty_text(self):
-        return re.sub(r'(\w) ([-&]\w)', r'\1\2', self.text)
+    # @property
+    # def pretty_text(self):
+    #     return re.sub(r'(\w) ([-&]\w)', r'\1\2', self.text)
 
     def re_punctuate(self, model: PunctuationModel):
         # word with last index that can be punctuated

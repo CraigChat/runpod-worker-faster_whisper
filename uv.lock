@@ -659,7 +659,7 @@ wheels = [
 
 [[package]]
 name = "faster-whisper"
-version = "1.1.0"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "av" },
@@ -669,9 +669,9 @@ dependencies = [
     { name = "tokenizers" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/31/b1/124f6d5a547756170e11eea405ae6c08afa2b96e8ccd10947a1244b50cdb/faster-whisper-1.1.0.tar.gz", hash = "sha256:cea4bba5d4527173fdbacafa56f2ffb17dd322688f6c3fdf5fd7b6b6c193ce17", size = 1124950, upload-time = "2024-11-21T17:21:30.118Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/c2/72002e5f80e73941de05f7b4347ea183d29f76768978a04acda68401c931/faster-whisper-1.2.0.tar.gz", hash = "sha256:56b20d616a575049a79f33b04f02db0868ce38c5d057a0b816d36ca59a6d2598", size = 1124896, upload-time = "2025-08-06T00:34:10.878Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/03/ab118cb743dcf671da01ad0cfd7564465dda115db32976fdc95e21ce8feb/faster_whisper-1.1.0-py3-none-any.whl", hash = "sha256:0f2d025676bbff1e46c4108b6f9a82578d6e33826c174af2990e45b33fab6182", size = 1118168, upload-time = "2024-11-21T17:21:27.383Z" },
+    { url = "https://files.pythonhosted.org/packages/da/6d/64cdc135e4195f9473c2e42aa1d2268654be4c289223828eee8e6ba4fc6d/faster_whisper-1.2.0-py3-none-any.whl", hash = "sha256:e5535628fe93b5123029b410fd8edba2d28f8cee9f8fff8119138e5a9d81afbe", size = 1118581, upload-time = "2025-08-06T00:34:09.476Z" },
 ]
 
 [[package]]
@@ -1968,7 +1968,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "deepmultilingualpunctuation", specifier = ">=1.0.1" },
-    { name = "faster-whisper", specifier = "==1.1.0" },
+    { name = "faster-whisper", specifier = "==1.2.0" },
     { name = "hf-xet", specifier = ">=1.1.10" },
     { name = "runpod", specifier = "~=1.7.13" },
 ]

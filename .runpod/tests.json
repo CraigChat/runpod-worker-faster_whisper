@@ -22,6 +22,22 @@
         "enable_vad": true
       },
       "timeout": 10000
+    },
+    {
+      "name": "transcription_corrector",
+      "input": {
+        "audios": [
+          "https://github.com/runpod-workers/sample-inputs/raw/main/audio/gettysburg.wav",
+          "https://github.com/runpod-workers/sample-inputs/raw/main/audio/NM014.mp3",
+          "https://github.com/runpod-workers/sample-inputs/raw/main/audio/Arthur.mp3",
+          "https://github.com/runpod-workers/sample-inputs/raw/main/audio/accent.mp3"
+        ],
+        "model": "distil-large-v3.5",
+        "word_timestamps": true,
+        "enable_vad": true,
+        "transcription_corrector": true
+      },
+      "timeout": 10000
     }
   ],
   "config": {

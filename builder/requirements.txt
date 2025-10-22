@@ -1,3 +1,4 @@
-runpod~=1.7.9
+runpod~=1.7.13
 hf-xet>=1.1.10
-faster-whisper==1.1.0
+faster-whisper==1.2.0
+deepmultilingualpunctuation>=1.0.1
