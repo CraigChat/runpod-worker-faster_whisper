@@ -2,6 +2,7 @@
 # https://github.com/KaddaOK/TASMAS/blob/main/assemble.py
 
 import json
+import re
 from operator import attrgetter
 from typing import Dict, List, Optional, Tuple
 import uuid
@@ -25,13 +26,26 @@ class Word:
     def __init__(self, track, word, start, end):
         self.id = uuid.uuid4()
         self.track = track
-        self.word = word
+        self.raw_word: str = word
+        # self.word: str = word.strip()
         self.start = start
         self.end = end
+
+    @property
+    def ending_punc(self):
+        match = re.search(r"(?<!\d)[.,;:!?](?!\d)$", self.raw_word.strip())
+        return match.group(0) if match else "0"
+
+    def replace_punc(self, new_punc):
+        # Remove existing punctuation
+        self.raw_word = re.sub(r"(?<!\d)[.,;:!?](?!\d)$", "", self.raw_word)
+        if new_punc != "0":
+            self.raw_word += new_punc
+
     def to_dict(self):
         return {
             'track': self.track,
-            'word': self.word,
+            'word': self.raw_word,
             'start': self.start,
             'end': self.end
         }
@@ -57,7 +71,43 @@ class WordList:
 
     @property
     def text(self):
-        return " ".join(word.word for word in self.words)
+        return "".join(word.raw_word for word in self.words)
+        # return " ".join(word.word for word in self.words)
+
+    @property
+    def pretty_text(self):
+        return re.sub(r'(\w) ([-&]\w)', r'\1\2', self.text)
+
+    def re_punctuate(self, model: PunctuationModel):
+        # word with last index that can be punctuated
+        processable_words: List[Tuple[str, int]] = []
+
+        for i in range(len(self.words)):
+            word = self.words[i]
+            clean_word = re.sub(r"(?<!\d)[.,;:!?](?!\d)", "",  word.raw_word.strip()) 
+            space_behind = word.raw_word.startswith(" ")
+            if not space_behind and len(processable_words) > 0:
+                # append to last processed word
+                last_word = processable_words[len(processable_words) - 1]
+                processable_words[len(processable_words) - 1] = (last_word[0] + clean_word, i)
+            else:
+                processable_words.append((clean_word, i))
+
+        results = model.predict([w[0] for w in processable_words])
+
+        change_count = 0
+        for i in range(len(results)):
+            result = results[i]
+            punc = result[1]
+            word_index = processable_words[i][1]
+            word = self.words[word_index]
+            old_punc = word.ending_punc
+            new_punc = punc
+            if old_punc != new_punc:
+                change_count += 1
+                word.replace_punc(new_punc)
+
+        return change_count
 
     def to_dict(self):
         return {
@@ -80,7 +130,7 @@ def normalize_and_merge_words(words: List[Word]):
         else:
             current_sentences[word.track].words.append(word)
 
-        last_character = word.word.strip()[-1]
+        last_character = word.raw_word.strip()[-1]
         if last_character in ['.', '!', '?', '-', ',', '~'] and current_sentences[word.track]:
             normal_words.append(current_sentences[word.track])
             current_sentences.pop(word.track)
@@ -122,26 +172,13 @@ def get_desynced_words(word_lists: List[WordList]):
     return desynced_lists
 
 
-def replace_corrected_words(word_list: WordList, new_text: str, original_words: List[Word]):
-    new_words = new_text.split()
-
-    if len(new_words) != len(word_list.words):
-        raise ValueError(f"The new text does not have the same number of words as the original. New count: {len(new_words)}, Old count: {len(word_list.words)}, text: '{new_text}' Original text: '{word_list.text}'")
-
-    for word, new_word in zip(word_list.words, new_words):
-        if word.word != new_word:
-            for original_word in original_words:
-                if original_word.id == word.id:
-                    original_word.word = new_word
-                    break
-
 # Add ellipsis, will be inserted after 5 seconds of silence
 def add_ellipsis_to_words(track_words: List[Word]):
   for i in range(1, len(track_words)):
       word = track_words[i]
       last_word = track_words[i - 1]
-      if word.start - last_word.end > 5 and not ends_with_break(last_word.word):
-          last_word.word = last_word.word.strip() + "..."
+      if word.start - last_word.end > 5 and not ends_with_break(last_word.raw_word):
+          last_word.raw_word = last_word.raw_word + "..."
 
 def correct_words(all_words: List[Word], model: PunctuationModel, logger):
     sorted_words = sorted(all_words, key=attrgetter('start', 'track', 'end'))
@@ -149,22 +186,30 @@ def correct_words(all_words: List[Word], model: PunctuationModel, logger):
     desynced_lists = get_desynced_words(normalized_lines)
     change_count = 0
     if len(desynced_lists) > 0:
-        logger.info(f"Found {len(desynced_lists)} items to be out of sync")
+        logger.info(f"Found {len(desynced_lists)} lines to be out of sync")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
+            words_to_check: List[Word] = []
             for item, _ in desynced_lists:
-                repunctuated = model.restore_punctuation(item.text)
-                if len(repunctuated) > len(item.text):
-                    replace_corrected_words(item, repunctuated, all_words)
+                changes = item.re_punctuate(model)
+                if changes > 0:
+                    words_to_check.extend(item.words)
                     change_count += 1
             logger.info(f"Changed {change_count} lines")
             if change_count > 0:
+                word_by_id: Dict[uuid.UUID, Word] = {}
+                for word in words_to_check:
+                    word_by_id[word.id] = word
+                for og_word in all_words:
+                    if og_word.id in word_by_id:
+                        og_word.raw_word = word_by_id[og_word.id].raw_word
+
                 sorted_words = sorted(all_words, key=attrgetter('start', 'track', 'end'))
                 normalized_lines = normalize_and_merge_words(sorted_words)
     
-    logger.info(f"Repunctuating {len(normalized_lines)} lines")
-    for line in normalized_lines:
-        repunctuated = model.restore_punctuation(line.text)
-        replace_corrected_words(line, repunctuated, all_words)
+    # logger.info(f"Repunctuating {len(normalized_lines)} lines")
+    # for line in normalized_lines:
+    #     repunctuated = model.restore_punctuation(line.text)
+    #     replace_corrected_words(line, repunctuated, all_words)
 
     return (normalized_lines, change_count)

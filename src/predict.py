@@ -26,6 +26,8 @@ AVAILABLE_MODELS = {
     "large-v1",
     "large-v2",
     "large-v3",
+    "distil-large-v2",
+    "distil-large-v3",
     "turbo",
 }
 
@@ -154,6 +156,9 @@ class Predictor:
             max_initial_timestamp=1.0,
             word_timestamps=word_timestamps,
             vad_filter=enable_vad,
+            vad_parameters={
+                "min_speech_duration_ms": 0.04
+            }
         )
 
         info = results[1]

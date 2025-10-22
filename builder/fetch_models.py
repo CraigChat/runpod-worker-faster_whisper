@@ -1,3 +1,4 @@
+import warnings
 from faster_whisper.utils import download_model
 import deepmultilingualpunctuation
 
@@ -24,10 +25,12 @@ def download_model_weights(selected_model):
     print(f"Finished downloading {selected_model}.")
 
 
-print("Downloading punctuation model...")
-model = deepmultilingualpunctuation.PunctuationModel()
-result = model.restore_punctuation("das , ist fies ")
-print("Finished downloading punctuation model.")
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    print("Downloading punctuation model...")
+    model = deepmultilingualpunctuation.PunctuationModel("kredor/punctuate-all")
+    result = model.restore_punctuation("das , ist fies ")
+    print("Finished downloading punctuation model.")
 
 # Loop through models sequentially
 for model_name in model_names:

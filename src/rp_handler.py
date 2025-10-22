@@ -23,7 +23,7 @@ logger = logging.getLogger("runpod-worker")
 
 MODEL = predict.Predictor()
 MODEL.setup()
-PUNCTUATION_MODEL = PunctuationModel()
+PUNCTUATION_MODEL = PunctuationModel("kredor/punctuate-all")
 
 
 def base64_to_tempfile(base64_file: str) -> str:
@@ -131,8 +131,6 @@ def run_whisper_job(job):
                 track_words: List[Word] = []
                 if "segments" in result:
                     for segment in result["segments"]:
-                        corrected_text = PUNCTUATION_MODEL.restore_punctuation(segment["text"])
-                        segment["corrected_text"] = corrected_text
                         if "words" in segment:
                             for word in segment["words"]:
                                 if word["word"]:
@@ -152,7 +150,15 @@ def run_whisper_job(job):
 
     (corrected_lines, change_count) = correct_words(all_words, PUNCTUATION_MODEL, logger)
 
-    # Return new format when transcription_corrector is enabled
+    # with open(f"jobs/normalized_words.json", 'w') as f:
+    #     lines = [f"Speaker {l.track + 1 if l.track is not None else 'NULL'}: \"{l.text}\"" for l in corrected_lines]
+    #     f.write(json.dumps({
+    #         "transcription": "\n".join(lines),
+    #         "change_count": change_count,
+    #         "corrected_lines": corrected_lines,
+    #         "results": results
+    #     }, cls=WordEncoder, indent=2))
+
     return {
         "corrected_segments": corrected_lines,
         "change_count": change_count,
