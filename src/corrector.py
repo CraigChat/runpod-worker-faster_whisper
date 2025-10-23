@@ -212,4 +212,4 @@ def correct_words(all_words: List[Word], model: PunctuationModel, logger):
     #     repunctuated = model.restore_punctuation(line.text)
     #     replace_corrected_words(line, repunctuated, all_words)
 
-    return (normalized_lines, change_count)
+    return ([wl.to_dict() for wl in normalized_lines], change_count)
