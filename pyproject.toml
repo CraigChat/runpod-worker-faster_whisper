@@ -5,7 +5,7 @@ description = "A modified version of Faster Whisper."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "deepmultilingualpunctuation@git+https://github.com/oliverguhr/deepmultilingualpunctuation.git@46b51966b55935aacc78df1b50db073bc597b112",
+    "deepmultilingualpunctuation>=1.0.1",
     "faster-whisper==1.2.0",
     "hf-xet>=1.1.10",
     "runpod~=1.7.13",

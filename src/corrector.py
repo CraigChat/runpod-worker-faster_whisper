@@ -2,27 +2,12 @@
 # https://github.com/KaddaOK/TASMAS/blob/main/assemble.py
 
 import json
-import os
 import re
 from operator import attrgetter
 from typing import Dict, List, Optional, Tuple
 import uuid
 import warnings
 from deepmultilingualpunctuation import PunctuationModel
-
-
-DEFAULT_PUNC_CHUNK_SIZE = 230
-
-
-def get_punc_chunk_size():
-    env_value = os.getenv("PUNC_CHUNK_SIZE")
-    if env_value is None:
-        return DEFAULT_PUNC_CHUNK_SIZE
-    try:
-        return int(env_value)
-    except ValueError:
-        warnings.warn("Invalid PUNC_CHUNK_SIZE value; falling back to default.")
-        return DEFAULT_PUNC_CHUNK_SIZE
 
 
 def ends_with_break(text: str):
@@ -54,9 +39,8 @@ class Word:
     def replace_punc(self, new_punc):
         # Remove existing punctuation
         self.raw_word = re.sub(r"(?<!\d)[.,;:!?](?!\d)$", "", self.raw_word)
-        normalized_punc = "" if new_punc is None else str(new_punc)
-        if normalized_punc and normalized_punc != "0":
-            self.raw_word += normalized_punc
+        if new_punc != "0":
+            self.raw_word += new_punc
 
     def to_dict(self):
         return {
@@ -109,8 +93,7 @@ class WordList:
             else:
                 processable_words.append((clean_word, i))
 
-        chunk_size = get_punc_chunk_size()
-        results = model.predict([w[0] for w in processable_words], chunk_size)
+        results = model.predict([w[0] for w in processable_words])
 
         change_count = 0
         for i in range(len(results)):
@@ -119,7 +102,7 @@ class WordList:
             word_index = processable_words[i][1]
             word = self.words[word_index]
             old_punc = word.ending_punc
-            new_punc = "0" if punc in (None, "", "0") else str(punc)
+            new_punc = punc
             if old_punc != new_punc:
                 change_count += 1
                 word.replace_punc(new_punc)
