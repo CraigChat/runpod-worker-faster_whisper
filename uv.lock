@@ -557,14 +557,10 @@ wheels = [
 [[package]]
 name = "deepmultilingualpunctuation"
 version = "1.0.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/oliverguhr/deepmultilingualpunctuation.git?rev=46b51966b55935aacc78df1b50db073bc597b112#46b51966b55935aacc78df1b50db073bc597b112" }
 dependencies = [
     { name = "torch" },
     { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/63/d6/96fb37bc6bb3e647d68a2003e63b99458f9ac3535eab1e4fc95dbe95455b/deepmultilingualpunctuation-1.0.1.tar.gz", hash = "sha256:aaf3c0ca56dfef7d6f27d9e675850595c586d62f1fda46a687e0c1b004a76c11", size = 4223, upload-time = "2022-02-11T13:15:10.14Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/a7/505f531c23aa2c381b597c9e59a62c20d9e6294f32ad7d06e4eaa2f3d438/deepmultilingualpunctuation-1.0.1-py3-none-any.whl", hash = "sha256:f346378adbecdcef84c63a61467f755d75385559d0260f60bef4315b5fb3a54f", size = 5366, upload-time = "2022-02-11T13:15:06.836Z" },
 ]
 
 [[package]]
@@ -1967,7 +1963,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deepmultilingualpunctuation", specifier = ">=1.0.1" },
+    { name = "deepmultilingualpunctuation", git = "https://github.com/oliverguhr/deepmultilingualpunctuation.git?rev=46b51966b55935aacc78df1b50db073bc597b112" },
     { name = "faster-whisper", specifier = "==1.2.0" },
     { name = "hf-xet", specifier = ">=1.1.10" },
     { name = "runpod", specifier = "~=1.7.13" },
