@@ -1,5 +1,6 @@
 {
-  "tests": [
+  "tests": [],
+  "_tests": [
     {
       "name": "basic_test",
       "input": {
