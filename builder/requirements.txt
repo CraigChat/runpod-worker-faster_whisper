@@ -1,4 +1,4 @@
 runpod~=1.7.13
 hf-xet>=1.1.10
 faster-whisper==1.2.0
-deepmultilingualpunctuation>=1.0.1
+deepmultilingualpunctuation@git+https://github.com/oliverguhr/deepmultilingualpunctuation.git@46b51966b55935aacc78df1b50db073bc597b112
