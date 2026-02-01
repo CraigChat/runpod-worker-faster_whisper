@@ -26,7 +26,10 @@ def get_punc_chunk_size():
 
 
 def ends_with_break(text: str):
-    last_character = text.strip()[-1]
+    stripped = text.strip()
+    if not stripped:
+        return False
+    last_character = stripped[-1]
     return last_character in ['.', '!', '?', '-', ',', '~']
 
 
@@ -196,12 +199,16 @@ def normalize_and_merge_words(words: List[Word]):
     current_sentences: Dict[int, WordList] = {}
 
     for word in words:
+        stripped_word = word.raw_word.strip()
+        if not stripped_word:
+            continue
+            
         if word.track not in current_sentences or current_sentences[word.track] is None:
             current_sentences[word.track] = WordList([word])
         else:
             current_sentences[word.track].words.append(word)
 
-        last_character = word.raw_word.strip()[-1]
+        last_character = stripped_word[-1]
         if last_character in ['.', '!', '?', '-', ',', '~'] and current_sentences[word.track]:
             normal_words.append(current_sentences[word.track])
             current_sentences.pop(word.track)
