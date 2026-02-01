@@ -67,6 +67,59 @@ class Word:
         }
 
 
+
+
+def predict_with_retry(model: PunctuationModel, words: List[str], initial_chunk_size: int, logger=None):
+    chunk_sizes_to_try = [
+        initial_chunk_size,
+        max(10, initial_chunk_size // 2),
+        max(10, initial_chunk_size // 4),
+        10
+    ]
+    
+    for attempt, chunk_size in enumerate(chunk_sizes_to_try):
+        try:
+            return model.predict(words, chunk_size)
+        except Exception as e:
+            error_message = str(e)
+            is_chunk_size_error = "chunk size too large" in error_message or isinstance(e, AssertionError)
+            
+            if is_chunk_size_error and attempt < len(chunk_sizes_to_try) - 1:
+                next_size = chunk_sizes_to_try[attempt + 1]
+                if logger:
+                    text_preview = " ".join(words[:5]) + ("..." if len(words) > 5 else "")
+                    logger.warning(
+                        f"Punctuation prediction failed with chunk_size={chunk_size} "
+                        f"({error_message}). Text preview: '{text_preview}' "
+                        f"(total words: {len(words)}). Retrying with chunk_size={next_size}..."
+                    )
+                continue
+            elif attempt < len(chunk_sizes_to_try) - 1:
+                # Non-chunk-size error, but we have more attempts
+                next_size = chunk_sizes_to_try[attempt + 1]
+                if logger:
+                    text_preview = " ".join(words[:5]) + ("..." if len(words) > 5 else "")
+                    logger.warning(
+                        f"Punctuation prediction failed with error: {type(e).__name__}: {error_message}. "
+                        f"Text preview: '{text_preview}' (total words: {len(words)}). "
+                        f"Retrying with chunk_size={next_size}..."
+                    )
+                continue
+            else:
+                # Last attempt failed
+                if logger:
+                    logger.error(
+                        f"Punctuation prediction failed after trying all chunk sizes {chunk_sizes_to_try}. "
+                        f"Error: {type(e).__name__}: {error_message}. "
+                        f"Words count: {len(words)}. Returning unpunctuated text."
+                    )
+                break
+    
+    if logger:
+        logger.info(f"Returning {len(words)} words without punctuation corrections due to prediction failures.")
+    return [[word, "0", 1.0] for word in words]
+
+
 class WordList:
     def __init__(self, words: List[Word]):
         if len(set(word.track for word in words)) > 1:
@@ -94,7 +147,7 @@ class WordList:
     # def pretty_text(self):
     #     return re.sub(r'(\w) ([-&]\w)', r'\1\2', self.text)
 
-    def re_punctuate(self, model: PunctuationModel):
+    def re_punctuate(self, model: PunctuationModel, logger=None):
         # word with last index that can be punctuated
         processable_words: List[Tuple[str, int]] = []
 
@@ -110,7 +163,8 @@ class WordList:
                 processable_words.append((clean_word, i))
 
         chunk_size = get_punc_chunk_size()
-        results = model.predict([w[0] for w in processable_words], chunk_size)
+        words_to_predict = [w[0] for w in processable_words]
+        results = predict_with_retry(model, words_to_predict, chunk_size, logger)
 
         change_count = 0
         for i in range(len(results)):
@@ -208,7 +262,7 @@ def correct_words(all_words: List[Word], model: PunctuationModel, logger):
             warnings.simplefilter("ignore")
             words_to_check: List[Word] = []
             for item, _ in desynced_lists:
-                changes = item.re_punctuate(model)
+                changes = item.re_punctuate(model, logger)
                 if changes > 0:
                     words_to_check.extend(item.words)
                     change_count += 1
