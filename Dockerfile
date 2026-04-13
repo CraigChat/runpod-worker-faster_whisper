@@ -1,6 +1,6 @@
 # faster-whisper turbo needs cudnnn >= 9
 # see https://github.com/runpod-workers/worker-faster_whisper/pull/44
-FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+FROM nvidia/cuda:13.2.0-cudnn-runtime-ubuntu24.04
 
 # Remove any third-party apt sources to avoid issues with expiring keys.
 RUN rm -f /etc/apt/sources.list.d/*.list
