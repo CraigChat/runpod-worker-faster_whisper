@@ -114,4 +114,9 @@ INPUT_VALIDATIONS = {
         'required': False,
         'default': False
     },
+    'batched': {
+        'type': bool,
+        'required': False,
+        'default': True
+    },
 }

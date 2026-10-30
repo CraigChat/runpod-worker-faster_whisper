@@ -17,6 +17,7 @@ import warnings
 
 from deepmultilingualpunctuation import PunctuationModel
 from corrector import Word, add_ellipsis_to_words, correct_words
+from decode import decode_files
 from rp_schema import INPUT_VALIDATIONS
 from runpod.serverless.utils import download_files_from_urls, rp_cleanup, rp_debugger
 from runpod.serverless.utils.rp_validator import validate
@@ -66,14 +67,16 @@ def log_request_completion(
     audio_count: int,
     max_concurrency: int,
     correction_enabled: bool,
+    batched: bool = False,
 ):
     logger.info(
-        "Job %s status=%s audio_count=%d max_concurrency=%d correction_enabled=%s "
+        "Job %s status=%s audio_count=%d batched=%s max_concurrency=%d correction_enabled=%s "
         "total=%.3fs validation=%.3fs input_preparation=%.3fs transcription=%.3fs "
         "correction=%.3fs cleanup=%.3fs",
         job_id,
         status,
         audio_count,
+        batched,
         max_concurrency,
         correction_enabled,
         timings.get("total", 0.0),
@@ -120,6 +123,7 @@ def run_whisper_job(job):
     status = "completed"
     audio_inputs: List[str] = []
     applied_concurrency = 1
+    use_batched = False
     correction_enabled = bool(job_input.get("transcription_corrector", False))
 
     try:
@@ -165,7 +169,10 @@ def run_whisper_job(job):
 
         logger.info(f"Number of audio inputs: {len(audio_inputs)}")
 
-        applied_concurrency = resolve_max_concurrency(len(audio_inputs))
+        use_batched = (
+            job_input["batched"] and job_input["enable_vad"] and not job_input["translate"]
+        )
+        applied_concurrency = 1 if use_batched else resolve_max_concurrency(len(audio_inputs))
 
         predict_kwargs = dict(
             model_name=job_input["model"],
@@ -189,31 +196,53 @@ def run_whisper_job(job):
             word_timestamps=job_input["word_timestamps"]
         )
 
-        def run_prediction(audio_path: str):
-            return MODEL.predict(audio=audio_path, **predict_kwargs)
-
-        def sequential_predict():
-            return [run_prediction(path) for path in audio_inputs]
+        def run_prediction(audio):
+            return MODEL.predict(audio=audio, **predict_kwargs)
 
         with timed_step("transcription", timings), rp_debugger.LineTimer('prediction_step'):
-            if len(audio_inputs) <= 1 or applied_concurrency <= 1:
-                results = sequential_predict()
+            if use_batched:
+                results = MODEL.predict_batched(
+                    audio_inputs,
+                    model_name=job_input["model"],
+                    transcription=job_input["transcription"],
+                    language=job_input["language"],
+                    beam_size=job_input["beam_size"],
+                    patience=job_input["patience"],
+                    length_penalty=job_input["length_penalty"],
+                    initial_prompt=job_input["initial_prompt"],
+                    temperature=job_input["temperature"],
+                    temperature_increment_on_fallback=job_input["temperature_increment_on_fallback"],
+                    compression_ratio_threshold=job_input["compression_ratio_threshold"],
+                    logprob_threshold=job_input["logprob_threshold"],
+                    no_speech_threshold=job_input["no_speech_threshold"],
+                    word_timestamps=job_input["word_timestamps"],
+                )
             else:
-                async def transcribe_all():
-                    semaphore = asyncio.Semaphore(applied_concurrency)
+                # Decode in child processes up front: PyAV decoding from several threads
+                # serialises on the GIL (see decode.py).
+                decoded_audios = decode_files(audio_inputs)
 
-                    async def predict_with_limit(path: str):
-                        async with semaphore:
-                            return await asyncio.to_thread(run_prediction, path)
+                def sequential_predict():
+                    return [run_prediction(audio) for audio in decoded_audios]
 
-                    coroutines = [predict_with_limit(path) for path in audio_inputs]
-                    return await asyncio.gather(*coroutines)
-
-                try:
-                    results = asyncio.run(transcribe_all())
-                except RuntimeError:
+                if len(decoded_audios) <= 1 or applied_concurrency <= 1:
                     results = sequential_predict()
-                    applied_concurrency = 1
+                else:
+                    async def transcribe_all():
+                        semaphore = asyncio.Semaphore(applied_concurrency)
+
+                        async def predict_with_limit(audio):
+                            async with semaphore:
+                                return await asyncio.to_thread(run_prediction, audio)
+
+                        coroutines = [predict_with_limit(audio) for audio in decoded_audios]
+                        return await asyncio.gather(*coroutines)
+
+                    try:
+                        results = asyncio.run(transcribe_all())
+                    except RuntimeError:
+                        results = sequential_predict()
+                        applied_concurrency = 1
 
         with timed_step("cleanup", timings), rp_debugger.LineTimer('cleanup_step'):
             rp_cleanup.clean(['input_objects'])
@@ -277,6 +306,7 @@ def run_whisper_job(job):
             len(audio_inputs),
             applied_concurrency,
             correction_enabled,
+            use_batched,
         )
 
 runpod.serverless.start({"handler": run_whisper_job})

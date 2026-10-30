@@ -5,6 +5,7 @@ repository, with some modifications to make it work with the RP platform.
 """
 
 import gc
+import os
 import threading
 from concurrent.futures import (
     ThreadPoolExecutor,
@@ -16,6 +17,13 @@ from runpod.serverless.utils import rp_cuda
 from faster_whisper import WhisperModel
 from faster_whisper.utils import format_timestamp
 from faster_whisper.transcribe import Segment
+
+import batched
+
+# rp_cuda.is_available() shells out to nvidia-smi; check once instead of on every call.
+CUDA_AVAILABLE = rp_cuda.is_available()
+DEVICE = "cuda" if CUDA_AVAILABLE else "cpu"
+COMPUTE_TYPE = "float16" if CUDA_AVAILABLE else "int8"
 
 # Define available models (for validation)
 AVAILABLE_MODELS = {
@@ -44,8 +52,101 @@ class Predictor:
         )  # Lock for thread-safe model loading/unloading
 
     def setup(self):
-        """No models are pre-loaded. Setup is minimal."""
-        pass
+        """Pre-load PRELOAD_MODEL (turbo by default) so the first job on a cold worker
+        doesn't pay for loading it. Set PRELOAD_MODEL to an empty string to disable."""
+        model_name = os.getenv("PRELOAD_MODEL", "turbo")
+        if model_name:
+            self.get_model(model_name)
+
+    def get_model(self, model_name):
+        """Return the requested model, loading it (and unloading any other) if needed."""
+        if model_name not in AVAILABLE_MODELS:
+            raise ValueError(
+                f"Invalid model name: {model_name}. Available models are: {AVAILABLE_MODELS}"
+            )
+
+        with self.model_lock:
+            if model_name in self.models:
+                print(f"Using already loaded model: {model_name}")
+                return self.models[model_name]
+
+            # Unload existing model if necessary
+            if self.models:
+                existing_model_name = list(self.models.keys())[0]
+                print(f"Unloading model: {existing_model_name}...")
+                self.models.clear()
+                # Hint Python to release memory
+                gc.collect()
+                print(f"Model {existing_model_name} unloaded.")
+
+            print(f"Loading model: {model_name}...")
+            try:
+                model = WhisperModel(model_name, device=DEVICE, compute_type=COMPUTE_TYPE)
+            except Exception as e:
+                print(f"Error loading model {model_name}: {e}")
+                raise ValueError(f"Failed to load model {model_name}: {e}") from e
+            self.models[model_name] = model
+            print(f"Model {model_name} loaded successfully.")
+            return model
+
+    def predict_batched(
+        self,
+        audios,
+        model_name="base",
+        transcription="none",
+        language=None,
+        beam_size=5,
+        patience=1,
+        length_penalty=None,
+        initial_prompt=None,
+        temperature=0,
+        temperature_increment_on_fallback=0.2,
+        compression_ratio_threshold=2.4,
+        logprob_threshold=-1.0,
+        no_speech_threshold=0.6,
+        word_timestamps=True,
+    ):
+        """
+        Transcribe several tracks together; see batched.py. Returns one result per
+        track, in the same shape as predict().
+        """
+        model = self.get_model(model_name)
+
+        if temperature_increment_on_fallback is not None:
+            temperatures = tuple(
+                np.arange(temperature, 1.0 + 1e-6, temperature_increment_on_fallback)
+            )
+        else:
+            temperatures = (temperature,)
+
+        tracks = batched.transcribe_tracks(
+            model,
+            audios,
+            language=language,
+            beam_size=beam_size,
+            patience=patience,
+            # rp_schema defaults this to 0; the batched path was validated with
+            # faster-whisper's default of 1 (normalise scores by length)
+            length_penalty=length_penalty or 1,
+            initial_prompt=initial_prompt,
+            fallback_temperatures=temperatures,
+            compression_ratio_threshold=compression_ratio_threshold,
+            log_prob_threshold=logprob_threshold,
+            no_speech_threshold=no_speech_threshold,
+            word_timestamps=word_timestamps,
+        )
+
+        return [
+            {
+                "segments": serialize_segments(segments),
+                "detected_language": detected_language,
+                "transcription": format_segments(transcription, segments),
+                "translation": None,
+                "device": DEVICE,
+                "model": model_name,
+            }
+            for segments, detected_language in tracks
+        ]
 
     def predict(
         self,
@@ -72,59 +173,11 @@ class Predictor:
     ):
         """
         Run a single prediction on the model, loading/unloading models as needed.
+        `audio` is a file path or an already-decoded 16 kHz mono float32 array.
         """
-        if model_name not in AVAILABLE_MODELS:
-            raise ValueError(
-                f"Invalid model name: {model_name}. Available models are: {AVAILABLE_MODELS}"
-            )
-
-        with self.model_lock:
-            model = None
-            if model_name not in self.models:
-                # Unload existing model if necessary
-                if self.models:
-                    existing_model_name = list(self.models.keys())[0]
-                    print(f"Unloading model: {existing_model_name}...")
-                    # Remove reference and clear dict
-                    del self.models[existing_model_name]
-                    self.models.clear()
-                    # Hint Python to release memory
-                    gc.collect()
-                    if rp_cuda.is_available():
-                        # If using PyTorch models, you might call torch.cuda.empty_cache()
-                        # FasterWhisper uses CTranslate2; explicit cache clearing might not be needed
-                        # but gc.collect() is generally helpful.
-                        pass
-                    print(f"Model {existing_model_name} unloaded.")
-
-                # Load the requested model
-                print(f"Loading model: {model_name}...")
-                try:
-                    loaded_model = WhisperModel(
-                        model_name,
-                        device="cuda" if rp_cuda.is_available() else "cpu",
-                        compute_type="float16" if rp_cuda.is_available() else "int8",
-                    )
-                    self.models[model_name] = loaded_model
-                    model = loaded_model
-                    print(f"Model {model_name} loaded successfully.")
-                except Exception as e:
-                    print(f"Error loading model {model_name}: {e}")
-                    raise ValueError(f"Failed to load model {model_name}: {e}") from e
-            else:
-                # Model already loaded
-                model = self.models[model_name]
-                print(f"Using already loaded model: {model_name}")
-
-            # Ensure model is loaded before proceeding
-            if model is None:
-                raise RuntimeError(
-                    f"Model {model_name} could not be loaded or retrieved."
-                )
-
-        # Model is now loaded and ready, proceed with prediction (outside the lock?)
-        # Consider if transcribe is thread-safe or if it should also be within the lock
-        # For now, keeping transcribe outside as it's CPU/GPU bound work
+        if not isinstance(audio, np.ndarray):
+            audio = str(audio)
+        model = self.get_model(model_name)
 
         if temperature_increment_on_fallback is not None:
             temperature = tuple(
@@ -137,7 +190,7 @@ class Predictor:
         # other threads to acquire the model_lock if transcribe is lengthy.
         # If issues arise, the lock might need to encompass the transcribe call too.
         results = model.transcribe(
-            str(audio),
+            audio,
             language=language,
             task="transcribe",
             beam_size=beam_size,
@@ -172,7 +225,7 @@ class Predictor:
         translation_output = None
         if translate:
             translation_segments, _ = model.transcribe(
-                str(audio),
+                audio,
                 task="translate",
                 temperature=temperature,  # Reuse temperature settings for translation
             )
@@ -185,7 +238,7 @@ class Predictor:
             "detected_language": info.language,
             "transcription": transcription_output,
             "translation": translation_output,
-            "device": "cuda" if rp_cuda.is_available() else "cpu",
+            "device": DEVICE,
             "model": model_name,
         }
 
