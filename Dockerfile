@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Copy and run script to fetch models
 COPY builder/fetch_models.py /fetch_models.py
-RUN python /fetch_models.py && \
+RUN HF_XET_HIGH_PERFORMANCE=1 python /fetch_models.py && \
     rm /fetch_models.py
 
 # Copy handler and other code
