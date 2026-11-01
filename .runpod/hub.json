@@ -1,0 +1,79 @@
+{
+  "title": "Faster Whisper (Craig)",
+  "description": "Transcribe multi-track audio with Faster Whisper. Tracks are decoded together in GPU batches, with word timestamps and optional punctuation correction across tracks.",
+  "type": "serverless",
+  "category": "audio",
+  "config": {
+    "runsOn": "GPU",
+    "containerDiskInGb": 5,
+    "gpuCount": 1,
+    "gpuIds": "AMPERE_16,AMPERE_24,AMPERE_48,ADA_48_PRO,-NVIDIA GeForce RTX 3090",
+    "allowedCudaVersions": ["12.8", "12.7", "12.6", "12.5", "12.4"],
+    "env": [
+      {
+        "key": "PRELOAD_MODEL",
+        "input": {
+          "name": "Preload model",
+          "type": "string",
+          "description": "Model loaded when the worker starts, so the first job doesn't wait for it. Jobs that request another model replace it.",
+          "options": [
+            { "label": "turbo", "value": "turbo" },
+            { "label": "distil-large-v3.5", "value": "distil-large-v3.5" },
+            { "label": "medium", "value": "medium" },
+            { "label": "small", "value": "small" },
+            { "label": "base", "value": "base" },
+            { "label": "tiny", "value": "tiny" },
+            { "label": "None (load on first job)", "value": "" }
+          ],
+          "default": "turbo"
+        }
+      },
+      {
+        "key": "BATCH_SIZE",
+        "input": {
+          "name": "Batch size",
+          "type": "number",
+          "description": "Speech chunks decoded together per GPU batch. Lower this if the GPU runs out of memory.",
+          "min": 1,
+          "max": 64,
+          "default": 16,
+          "advanced": true
+        }
+      },
+      {
+        "key": "PREP_THREADS",
+        "input": {
+          "name": "Preparation threads",
+          "type": "string",
+          "description": "CPU workers for audio decoding and voice activity detection. Leave empty to use the container's CPU quota.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "MAX_CONCURRENCY",
+        "input": {
+          "name": "Max concurrency",
+          "type": "number",
+          "description": "Tracks transcribed at once on the sequential path (batched: false, or translate). 0 means no limit.",
+          "min": 0,
+          "max": 32,
+          "default": 4,
+          "advanced": true
+        }
+      },
+      {
+        "key": "PUNC_CHUNK_SIZE",
+        "input": {
+          "name": "Punctuation chunk size",
+          "type": "number",
+          "description": "Words sent to the punctuation model at a time when transcription_corrector is enabled.",
+          "min": 1,
+          "max": 512,
+          "default": 120,
+          "advanced": true
+        }
+      }
+    ]
+  }
+}
