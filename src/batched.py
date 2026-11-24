@@ -34,6 +34,12 @@ SILENCE_LEVEL = 1e-4
 SILENCE_GUARD_S = 8.0
 SILENCE_MIN_GAP_S = 18.0
 
+# A chunk is decoded in one pass, and the model sometimes ends the text before the audio
+# does (typically a long sentence followed by short remarks). When at least this much
+# audio is left after the last word, the rest is decoded again as its own chunk.
+TAIL_MIN_S = 2.0
+TAIL_MAX_PASSES = 4
+
 
 def _batch_size() -> int:
     try:
@@ -99,6 +105,7 @@ def transcribe_tracks(
     tracks: List[Optional[dict]] = [None] * len(paths)
     languages: List[Optional[str]] = [language] * len(paths)
     chunk_segments = {}  # (track index, chunk index) -> list of segment dicts
+    tail_count = [0]  # chunk tails that needed another pass
     contexts = {}  # language -> (tokenizer, options)
 
     def prepare(path: str) -> dict:
@@ -154,10 +161,8 @@ def transcribe_tracks(
             ))
         return contexts[lang]
 
-    def redecode(track_index: int, chunk_index: int, lang: str) -> List[dict]:
+    def redecode(audio: np.ndarray, offset: float, lang: str) -> List[dict]:
         """Sequential decode of one chunk with the full temperature-fallback schedule."""
-        audio, _, metadata = tracks[track_index]["chunks"][chunk_index]
-        offset = metadata["offset"]
         segments, _ = model.transcribe(
             audio,
             language=lang,
@@ -187,28 +192,61 @@ def transcribe_tracks(
             for s in segments
         ]
 
+    def tail_of(item, segments: List[dict]):
+        """The part of a chunk after its last transcribed word, as a new batch item, or
+        None when (nearly) all of the chunk was transcribed."""
+        track_index, chunk_index, audio, _, metadata = item
+        words = [w for s in segments for w in s.get("words") or []]
+        if not words:
+            return None
+        done = max(w["end"] for w in words) - metadata["offset"]
+        if done <= 0 or metadata["duration"] - done < TAIL_MIN_S:
+            return None
+        rest = audio[int(done * SAMPLING_RATE):]
+        return (
+            track_index, chunk_index, rest, model.feature_extractor(rest)[..., :-1],
+            {
+                "offset": metadata["offset"] + done,
+                "duration": len(rest) / SAMPLING_RATE,
+                "segments": [],
+            },
+        )
+
     def run_batch(batch, lang: str):
         tokenizer, options = context(lang)
-        features = np.stack([pad_or_trim(f) for _, _, f, _ in batch])
-        pipeline.last_speech_timestamp = 0.0
-        outputs = pipeline.forward(features, tokenizer, [m for *_, m in batch], options)
-        for (track_index, chunk_index, _, _), segments in zip(batch, outputs):
-            if (
-                segments
-                and no_speech_threshold is not None
-                and segments[0]["no_speech_prob"] > no_speech_threshold
-                and log_prob_threshold is not None
-                and segments[0]["avg_logprob"] < log_prob_threshold
-            ):
-                segments = []
-            if compression_ratio_threshold is not None and any(
-                s["compression_ratio"] > compression_ratio_threshold for s in segments
-            ):
-                logger.info("Re-decoding chunk %d of track %d with fallback", chunk_index, track_index)
-                segments = redecode(track_index, chunk_index, lang)
-            chunk_segments[(track_index, chunk_index)] = segments
+        for _ in range(TAIL_MAX_PASSES):
+            features = np.stack([pad_or_trim(f) for _, _, _, f, _ in batch])
+            pipeline.last_speech_timestamp = 0.0
+            outputs = pipeline.forward(features, tokenizer, [m for *_, m in batch], options)
+            tails = []
+            for item, segments in zip(batch, outputs):
+                track_index, chunk_index, audio, _, metadata = item
+                redecoded = False
+                if (
+                    segments
+                    and no_speech_threshold is not None
+                    and segments[0]["no_speech_prob"] > no_speech_threshold
+                    and log_prob_threshold is not None
+                    and segments[0]["avg_logprob"] < log_prob_threshold
+                ):
+                    segments = []
+                if compression_ratio_threshold is not None and any(
+                    s["compression_ratio"] > compression_ratio_threshold for s in segments
+                ):
+                    logger.info("Re-decoding chunk %d of track %d with fallback", chunk_index, track_index)
+                    # the sequential decode works through the whole chunk by itself
+                    segments = redecode(audio, metadata["offset"], lang)
+                    redecoded = True
+                chunk_segments.setdefault((track_index, chunk_index), []).extend(segments)
+                tail = None if redecoded else tail_of(item, segments)
+                if tail is not None:
+                    tails.append(tail)
+            if not tails:
+                break
+            tail_count[0] += len(tails)
+            batch = tails
 
-    pending = defaultdict(list)  # language -> [(track, chunk, features, metadata)]
+    pending = defaultdict(list)  # language -> [(track, chunk, audio, features, metadata)]
     with ThreadPoolExecutor(cores) as vad_pool, \
             ThreadPoolExecutor(min(len(paths), cores)) as prep_pool:
         futures = {prep_pool.submit(prepare, path): i for i, path in enumerate(paths)}
@@ -220,8 +258,8 @@ def transcribe_tracks(
             lang = languages[track_index] = language or detect_language(track)
             queue = pending[lang]
             queue.extend(
-                (track_index, chunk_index, features, metadata)
-                for chunk_index, (_, features, metadata) in enumerate(track["chunks"])
+                (track_index, chunk_index, audio, features, metadata)
+                for chunk_index, (audio, features, metadata) in enumerate(track["chunks"])
             )
             # keep the GPU busy while the remaining tracks are still being prepared
             while len(queue) >= batch_size:
@@ -231,6 +269,9 @@ def transcribe_tracks(
     for lang, queue in pending.items():
         for i in range(0, len(queue), batch_size):
             run_batch(queue[i:i + batch_size], lang)
+
+    if tail_count[0]:
+        logger.info("Decoded %d chunk tails the first pass left untranscribed", tail_count[0])
 
     results = []
     for track_index, track in enumerate(tracks):
